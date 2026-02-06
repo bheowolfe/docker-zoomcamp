@@ -2,17 +2,8 @@
 # coding: utf-8
 
 import pandas as pd
-
-year = 2021
-month = 1
-
-prefix = 'https://github.com/DataTalksClub/nyc-tlc-data/releases/download/yellow/'
-url = f'{prefix}/yellow_tripdata_{year}-{month:02d}.csv.gz'
-
-
-
-df = pd.read_csv(url)
-
+from sqlalchemy import create_engine
+from tqdm.auto import tqdm
 
 dtype = {
     "VendorID": "Int64",
@@ -38,72 +29,72 @@ parse_dates = [
     "tpep_dropoff_datetime"
 ]
 
-pg_user = 'root'
-pg_pass = 'root'
-pg_host = 'local'
-pg_db =  'ny_taxi'
 
-df = pd.read_csv(
-    url,
-    dtype=dtype,
-    parse_dates=parse_dates
-)
+def ingest_data(
+        url: str,
+        engine,
+        target_table: str,
+        chunksize: int = 100000,
+) -> pd.DataFrame:
+    df_iter = pd.read_csv(
+        url,
+        dtype=dtype,
+        parse_dates=parse_dates,
+        iterator=True,
+        chunksize=chunksize
+    )
 
+    first_chunk = next(df_iter)
 
-df['tpep_pickup_datetime']
+    first_chunk.head(0).to_sql(
+        name=target_table,
+        con=engine,
+        if_exists="replace"
+    )
 
+    print(f"Table {target_table} created")
 
-get_ipython().system('uv add sqlalchemy')
+    first_chunk.to_sql(
+        name=target_table,
+        con=engine,
+        if_exists="append"
+    )
 
+    print(f"Inserted first chunk: {len(first_chunk)}")
 
-from sqlalchemy import create_engine
-engine = create_engine('postgresql://root:root@localhost:5432/ny_taxi')
+    for df_chunk in tqdm(df_iter):
+        df_chunk.to_sql(
+            name=target_table,
+            con=engine,
+            if_exists="append"
+        )
+        print(f"Inserted chunk: {len(df_chunk)}")
 
+    print(f'done ingesting to {target_table}')
 
-get_ipython().system('uv add psycopg2-binary')
+def main():
+    pg_user = 'root'
+    pg_pass = 'root'
+    pg_host = 'localhost'
+    pg_port = 5432
+    pg_db = 'ny_taxi'
+    
+    year = 2021
+    month = 1
+    chunksize = 100000
+    target_table = 'yellow_taxi_data'
 
+    engine = create_engine(f'postgresql://{pg_user}:{pg_pass}@{pg_host}:{pg_port}/{pg_db}')
+    url_prefix = 'https://github.com/DataTalksClub/nyc-tlc-data/releases/download/yellow'
 
-from sqlalchemy import create_engine
-engine = create_engine('postgresql://root:root@localhost:5432/ny_taxi')
+    url = f'{url_prefix}/yellow_tripdata_{year:04d}-{month:02d}.csv.gz'
 
+    ingest_data(
+        url=url,
+        engine=engine,
+        target_table=target_table,
+        chunksize=chunksize
+    )
 
-print(pd.io.sql.get_schema(df, name='yellow_taxi_data', con=engine))
-
-
-df.head(n=0).to_sql(name='yellow_taxi_data', con=engine, if_exists='replace')
-
-
-df_iter = pd.read_csv(
-    url,
-    dtype=dtype,
-    parse_dates=parse_dates,
-    iterator=True,
-    chunksize=100000
-)
-
-
-get_ipython().system('uv add tqdm')
-
-
-from tqdm.auto import tqdm
-
-
-for df_chunck in df_iter:
-    print(len(df_chunk))
-
-
-df_iter = pd.read_csv(
-    url,
-    dtype=dtype,
-    parse_dates=parse_dates,
-    iterator=True,
-    chunksize=100000
-)
-
-
-for df_chunck in tqdm(df_iter):
-    df_chunck.to_sql(name='yellow_taxi_data', con=engine, if_exists='append')
-
-
-
-
+if __name__ == '__main__':
+    main()
